@@ -3,9 +3,9 @@ package is.bergur.map;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
-class LmiIcelandTileFactoryInfoTest {
+class OpenTopoMapTileFactoryInfoTest {
 
-    private final LmiIcelandTileFactoryInfo info = new LmiIcelandTileFactoryInfo();
+    private final OpenTopoMapTileFactoryInfo info = new OpenTopoMapTileFactoryInfo();
 
     @Test
     void urlUsesHttps() {
@@ -13,8 +13,8 @@ class LmiIcelandTileFactoryInfoTest {
     }
 
     @Test
-    void urlContainsLmiHost() {
-        assertTrue(info.getTileUrl(10, 20, 5).contains("wmts.lmi.is"));
+    void urlContainsOpenTopoMapHost() {
+        assertTrue(info.getTileUrl(10, 20, 5).contains("opentopomap.org"));
     }
 
     @Test

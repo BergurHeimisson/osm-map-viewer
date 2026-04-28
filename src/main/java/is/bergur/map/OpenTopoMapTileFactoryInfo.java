@@ -2,13 +2,13 @@ package is.bergur.map;
 
 import org.jxmapviewer.viewer.TileFactoryInfo;
 
-public class LmiIcelandTileFactoryInfo extends TileFactoryInfo {
+public class OpenTopoMapTileFactoryInfo extends TileFactoryInfo {
 
     private static final int MAX_ZOOM = 17;
 
-    public LmiIcelandTileFactoryInfo() {
+    public OpenTopoMapTileFactoryInfo() {
         super(1, MAX_ZOOM - 2, MAX_ZOOM, 256, true, true,
-              "https://wmts.lmi.is/mapcache/wmts/1.0.0/LMI_Stafraen_Uppdrattur/default/GoogleMapsCompatible/",
+              "https://tile.opentopomap.org/",
               "x", "y", "zoom");
     }
 

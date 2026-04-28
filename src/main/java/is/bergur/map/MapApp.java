@@ -219,7 +219,7 @@ public class MapApp extends JFrame {
         return switch (layer) {
             case STREET    -> new OsmHttpsTileFactoryInfo();
             case SATELLITE -> new EsriSatelliteTileFactoryInfo();
-            case LMI       -> new LmiIcelandTileFactoryInfo();
+            case LMI       -> new OpenTopoMapTileFactoryInfo();
         };
     }
 
@@ -267,7 +267,7 @@ public class MapApp extends JFrame {
             String label = switch (layer) {
                 case STREET    -> "Street Map";
                 case SATELLITE -> "Satellite";
-                case LMI       -> "LMI Iceland";
+                case LMI       -> "OpenTopoMap";
             };
             JRadioButtonMenuItem item = new JRadioButtonMenuItem(label);
             item.setSelected(layer == currentLayer);
