@@ -24,6 +24,7 @@ public class TileOverlayPainter implements Painter<JXMapViewer> {
     private volatile String urlTemplate = null;
     private final ConcurrentHashMap<String, BufferedImage> cache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> inFlight = new ConcurrentHashMap<>();
+    // Daemon threads so in-flight fetches don't block JVM shutdown on window close
     private final ExecutorService executor = Executors.newFixedThreadPool(4,
         r -> { Thread t = new Thread(r); t.setDaemon(true); return t; });
     private final HttpClient httpClient = HttpClient.newHttpClient();

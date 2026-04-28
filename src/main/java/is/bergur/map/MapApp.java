@@ -26,8 +26,23 @@ public class MapApp extends JFrame {
     private static final String PREF_WIN_W = "win_w";
     private static final String PREF_WIN_H = "win_h";
 
-    private enum Layer { STREET, SATELLITE }
+    private static final String PREF_OVERLAY = "overlay";
+
+    private enum Layer { STREET, SATELLITE, LMI }
+
+    private enum Overlay {
+        NONE(null),
+        CYCLING("https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png"),
+        HIKING ("https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png");
+
+        final String urlTemplate;
+        Overlay(String urlTemplate) { this.urlTemplate = urlTemplate; }
+    }
+
     private static final String DEFAULT_THEME = "com.formdev.flatlaf.FlatDarculaLaf";
+
+    private Overlay currentOverlay;
+    private final TileOverlayPainter tileOverlayPainter = new TileOverlayPainter();
 
     private static final double FALLBACK_LAT = 64.1355;
     private static final double FALLBACK_LON = -21.8954;
@@ -90,6 +105,7 @@ public class MapApp extends JFrame {
         });
 
         currentLayer = Layer.valueOf(prefs.get(PREF_LAYER, Layer.STREET.name()));
+        currentOverlay = Overlay.valueOf(prefs.get(PREF_OVERLAY, Overlay.NONE.name()));
         initComponents();
         setJMenuBar(createMenuBar());
         geocodeHome();
@@ -109,7 +125,8 @@ public class MapApp extends JFrame {
         mapViewer.addMouseListener(mouseListener);
         mapViewer.addMouseMotionListener(mouseListener);
         mapViewer.addMouseWheelListener(new ZoomMouseWheelListenerCursor(mapViewer));
-        mapViewer.setOverlayPainter(routePainter);
+        tileOverlayPainter.setUrlTemplate(currentOverlay.urlTemplate);
+        mapViewer.setOverlayPainter(new LayeredPainter(tileOverlayPainter, routePainter));
 
         statusLabel = new JLabel("Locating Uthlid 16...");
         statusLabel.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
@@ -199,7 +216,18 @@ public class MapApp extends JFrame {
     }
 
     private org.jxmapviewer.viewer.TileFactoryInfo tileFactoryInfoForLayer(Layer layer) {
-        return layer == Layer.SATELLITE ? new EsriSatelliteTileFactoryInfo() : new OsmHttpsTileFactoryInfo();
+        return switch (layer) {
+            case STREET    -> new OsmHttpsTileFactoryInfo();
+            case SATELLITE -> new EsriSatelliteTileFactoryInfo();
+            case LMI       -> new LmiIcelandTileFactoryInfo();
+        };
+    }
+
+    private void switchOverlay(Overlay overlay) {
+        currentOverlay = overlay;
+        prefs.put(PREF_OVERLAY, overlay.name());
+        tileOverlayPainter.setUrlTemplate(overlay.urlTemplate);
+        mapViewer.repaint();
     }
 
     private void switchLayer(Layer layer) {
@@ -232,13 +260,35 @@ public class MapApp extends JFrame {
         bar.add(appearance);
 
         JMenu layerMenu = new JMenu("Layer");
-        ButtonGroup layerGroup = new ButtonGroup();
+
+        // Base layer group
+        ButtonGroup baseGroup = new ButtonGroup();
         for (Layer layer : Layer.values()) {
-            String label = layer == Layer.SATELLITE ? "Satellite" : "Street Map";
+            String label = switch (layer) {
+                case STREET    -> "Street Map";
+                case SATELLITE -> "Satellite";
+                case LMI       -> "LMI Iceland";
+            };
             JRadioButtonMenuItem item = new JRadioButtonMenuItem(label);
             item.setSelected(layer == currentLayer);
             item.addActionListener(ev -> switchLayer(layer));
-            layerGroup.add(item);
+            baseGroup.add(item);
+            layerMenu.add(item);
+        }
+
+        // Overlay group
+        layerMenu.add(new JSeparator());
+        ButtonGroup overlayGroup = new ButtonGroup();
+        for (Overlay overlay : Overlay.values()) {
+            String label = switch (overlay) {
+                case NONE    -> "None";
+                case CYCLING -> "Cycling";
+                case HIKING  -> "Hiking";
+            };
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(label);
+            item.setSelected(overlay == currentOverlay);
+            item.addActionListener(ev -> switchOverlay(overlay));
+            overlayGroup.add(item);
             layerMenu.add(item);
         }
         bar.add(layerMenu);
