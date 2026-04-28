@@ -12,19 +12,36 @@ mvn package           # compile + test + build fat JAR at target/osm-map-1.0-SNA
 
 ## Architecture
 
-Three classes under `src/main/java/is/bergur/map/`:
+Classes under `src/main/java/is/bergur/map/`:
 
-- **`MapApp`** — JFrame entry point. Owns the JXMapViewer, button panel, theme menu, and window-position persistence via `java.util.prefs.Preferences`. On startup it fires a `SwingWorker` that calls `NominatimGeocoder` and re-centers the map once the exact coordinates arrive.
-- **`NominatimGeocoder`** — Calls the Nominatim OSM geocoding API (`nominatim.openstreetmap.org`) over `java.net.http.HttpClient`. `parseResponse()` and `buildUrl()` are package-private so they can be unit-tested without HTTP.
-- **`GeoUtils`** — Single static method `panDelta(zoom)` that returns the degree offset for one button press, scaling with JXMapViewer zoom level (zoom 1 = street level → tiny delta; zoom 17 = world view → large delta).
+- **`MapApp`** — JFrame entry point. Owns the JXMapViewer, button panel, theme menu, layer/overlay menus, and window-position persistence via `java.util.prefs.Preferences`. On startup fires a `SwingWorker` that calls `NominatimGeocoder` and re-centers the map. Contains `Layer` enum (STREET, SATELLITE, LMI) and `Overlay` enum (NONE, CYCLING, HIKING).
+- **`NominatimGeocoder`** — Calls the Nominatim OSM geocoding API over `java.net.http.HttpClient`. `parseResponse()` and `buildUrl()` are package-private for unit testing.
+- **`GeoUtils`** — Single static method `panDelta(zoom)` returning degree offset per button press, scaling with JXMapViewer zoom level.
+- **`OsmHttpsTileFactoryInfo`** — TileFactoryInfo for OSM standard tiles (`tile.openstreetmap.org`).
+- **`EsriSatelliteTileFactoryInfo`** — TileFactoryInfo for ESRI World Imagery tiles. Note: ESRI uses `z/y/x` URL order (not `z/x/y`).
+- **`OpenTopoMapTileFactoryInfo`** — TileFactoryInfo for OpenTopoMap (`tile.opentopomap.org`). Topographic rendering of OSM data with contour lines.
+- **`TileOverlayPainter`** — `Painter<JXMapViewer>` that fetches Waymarked Trails overlay tiles async and draws them on top of the base map. Uses a `ConcurrentHashMap` cache keyed by tile URL. `setUrlTemplate(String)` switches overlays (null = no-op). Static helpers `buildTileUrl` and `latLonToTileXY` are package-private for testing.
+- **`LayeredPainter`** — Composes multiple `Painter<JXMapViewer>` instances, calling each in order. Used to stack `TileOverlayPainter` under `RoutePainter`.
+- **`OsrmRouter`** — Fetches driving routes from the OSRM public API. Returns a list of `GeoPosition` points.
+- **`RoutePainter`** — `Painter<JXMapViewer>` that draws a route polyline as an overlay.
 
 ## Key design notes
 
 - **JXMapViewer zoom scale**: zoom 1 = most zoomed in (street), zoom 17 = world. `adjustZoom(+1)` zooms *out*.
-- **Pan direction math**: `pan(dx, dy)` uses `getCenterPosition()` and calls `setAddressLocation()` with the delta applied. North = latitude increase, so dy=-1 subtracts from dy giving `lat - (-1)*delta = lat + delta`. ✓
-- **Geocode fallback**: `homeLat/homeLon` start at approximate Reykjavík center (64.1355, -21.8954). The geocoder result overwrites them; if geocoding fails, the Home button still returns to the fallback.
-- **Mouse interaction**: drag-to-pan and scroll-wheel-zoom are wired via JXMapViewer's `PanMouseInputListener` and `ZoomMouseWheelListenerCursor` — buttons are supplementary.
-- **Theme + window state** persist across restarts via `Preferences.userNodeForPackage(MapApp.class)`.
+- **Tile zoom inversion**: all `TileFactoryInfo` subclasses convert JX zoom to OSM zoom via `osm_z = MAX_ZOOM(17) - jxZoom`.
+- **Pan direction math**: `pan(dx, dy)` uses `getCenterPosition()` and calls `setAddressLocation()` with the delta applied. North = latitude increase.
+- **Geocode fallback**: `homeLat/homeLon` start at approximate Reykjavík center (64.1355, -21.8954). The geocoder result overwrites them.
+- **Mouse interaction**: drag-to-pan and scroll-wheel-zoom via `PanMouseInputListener` and `ZoomMouseWheelListenerCursor` — buttons are supplementary.
+- **Theme + window + layer + overlay** all persist across restarts via `Preferences.userNodeForPackage(MapApp.class)`.
+- **Overlay tile fetching**: `TileOverlayPainter` uses daemon threads so in-flight fetches don't block JVM shutdown. Stale overlays are prevented by comparing `expectedTemplate` to `urlTemplate` before caching.
+- **LMI Iceland caveat**: `gis.lmi.is` only serves EPSG:3057 tiles (Icelandic national projection), incompatible with JXMapViewer's Web Mercator system. OpenTopoMap is used instead for the topographic layer.
+
+## Overlay tile sources
+
+| Overlay | URL pattern |
+|---------|-------------|
+| Cycling | `https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png` |
+| Hiking  | `https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png` |
 
 ## Dependencies
 
