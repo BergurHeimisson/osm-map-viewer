@@ -8,12 +8,14 @@ import org.jxmapviewer.input.ZoomMouseWheelListenerCursor;
 import org.jxmapviewer.viewer.DefaultTileFactory;
 import org.jxmapviewer.viewer.GeoPosition;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.event.MouseInputListener;
 import java.awt.*;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.*;
 import java.util.prefs.Preferences;
 
 public class MapApp extends JFrame {
@@ -27,6 +29,7 @@ public class MapApp extends JFrame {
     private static final String PREF_WIN_H = "win_h";
 
     private static final String PREF_OVERLAY = "overlay";
+    private static final String PREF_LAST_PHOTO_DIR = "last_photo_dir";
 
     private enum Layer { STREET, SATELLITE, LMI }
 
@@ -129,6 +132,14 @@ public class MapApp extends JFrame {
         mapViewer.setOverlayPainter(new LayeredPainter(tileOverlayPainter, routePainter));
 
         statusLabel = new JLabel("Locating Uthlid 16...");
+
+        mapViewer.addPropertyChangeListener("centerPosition", evt -> {
+            GeoPosition pos = (GeoPosition) evt.getNewValue();
+            if (pos != null) {
+                statusLabel.setText(String.format(java.util.Locale.US, "%.5f, %.5f",
+                    pos.getLatitude(), pos.getLongitude()));
+            }
+        });
         statusLabel.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
 
         setLayout(new BorderLayout());
@@ -154,10 +165,20 @@ public class MapApp extends JFrame {
         zoomPanel.add(zoomIn);
         zoomPanel.add(zoomOut);
 
+        JButton copyBtn = new JButton("Copy");
+        copyBtn.setFont(copyBtn.getFont().deriveFont(Font.PLAIN, 11f));
+        copyBtn.setMargin(new Insets(2, 6, 2, 6));
+        copyBtn.addActionListener(e -> {
+            java.awt.datatransfer.StringSelection sel =
+                new java.awt.datatransfer.StringSelection(statusLabel.getText());
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, sel);
+        });
+
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
         controls.add(panGrid);
         controls.add(zoomPanel);
         controls.add(statusLabel);
+        controls.add(copyBtn);
 
         return controls;
     }
@@ -302,7 +323,145 @@ public class MapApp extends JFrame {
         routeMenu.add(showRoute);
         bar.add(routeMenu);
 
+        JMenu photoMenu = new JMenu("Photo");
+        JMenuItem openPhoto = new JMenuItem("Open Photo...");
+        openPhoto.addActionListener(ev -> openPhotoAndLocate());
+        photoMenu.add(openPhoto);
+        bar.add(photoMenu);
+
         return bar;
+    }
+
+    private void openPhotoAndLocate() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select a photo");
+        String lastDir = prefs.get(PREF_LAST_PHOTO_DIR, null);
+        if (lastDir != null) chooser.setCurrentDirectory(new File(lastDir));
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setAcceptAllFileFilterUsed(false);
+        for (String ext : new String[]{"jpg", "jpeg", "heic", "heif", "tif", "tiff", "png", "dng", "cr3", "cr2", "nef", "arw", "raf"}) {
+            chooser.addChoosableFileFilter(
+                new javax.swing.filechooser.FileNameExtensionFilter(ext.toUpperCase() + " files", ext));
+        }
+        ImagePreviewPanel preview = new ImagePreviewPanel();
+        chooser.setAccessory(preview);
+        chooser.addPropertyChangeListener(preview);
+
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File selected = chooser.getSelectedFile();
+        prefs.put(PREF_LAST_PHOTO_DIR, selected.getParent());
+
+        PhotoLocator.readGps(selected).ifPresentOrElse(pos -> {
+            mapViewer.setAddressLocation(pos);
+            mapViewer.setZoom(3);
+        }, () -> JOptionPane.showMessageDialog(this,
+            "No GPS coordinates found in this photo.",
+            "No Location", JOptionPane.INFORMATION_MESSAGE));
+    }
+
+    private class ImagePreviewPanel extends JPanel implements java.beans.PropertyChangeListener {
+        private static final int SIZE = 220;
+        private static final Set<String> RAW_EXTS = new HashSet<>(
+            Arrays.asList("cr3", "cr2", "nef", "arw", "raf", "dng"));
+
+        private BufferedImage thumb;
+        private String status = "No image selected";
+        private SwingWorker<BufferedImage, Void> currentWorker;
+
+        ImagePreviewPanel() {
+            setPreferredSize(new Dimension(SIZE + 20, SIZE + 20));
+            setBorder(BorderFactory.createTitledBorder("Preview"));
+        }
+
+        @Override
+        public void propertyChange(java.beans.PropertyChangeEvent evt) {
+            if (JFileChooser.SELECTED_FILE_CHANGED_PROPERTY.equals(evt.getPropertyName())) {
+                load((File) evt.getNewValue());
+            }
+        }
+
+        private void load(File file) {
+            if (currentWorker != null) currentWorker.cancel(true);
+            thumb = null;
+            if (file == null || !file.isFile()) {
+                status = "No image selected";
+                repaint();
+                return;
+            }
+            status = "Loading...";
+            repaint();
+            currentWorker = new SwingWorker<>() {
+                @Override
+                protected BufferedImage doInBackground() throws Exception {
+                    String ext = ext(file);
+                    return RAW_EXTS.contains(ext) ? loadRaw(file) : loadStandard(file);
+                }
+                @Override
+                protected void done() {
+                    if (!isCancelled()) {
+                        try { thumb = get(); } catch (Exception ignored) {}
+                        status = thumb != null ? "" : "Cannot preview";
+                        repaint();
+                    }
+                }
+            };
+            currentWorker.execute();
+        }
+
+        private BufferedImage loadStandard(File f) throws Exception {
+            BufferedImage img = ImageIO.read(f);
+            return img != null ? scale(img) : null;
+        }
+
+        private BufferedImage loadRaw(File f) throws Exception {
+            File tmp = File.createTempFile("map_prev_", ".jpg");
+            tmp.deleteOnExit();
+            try {
+                new ProcessBuilder(
+                    "sips", "-s", "format", "jpeg",
+                    "-z", String.valueOf(SIZE * 2), String.valueOf(SIZE * 2),
+                    f.getAbsolutePath(), "--out", tmp.getAbsolutePath()
+                ).redirectErrorStream(true).start().waitFor();
+                if (tmp.length() > 0) {
+                    BufferedImage img = ImageIO.read(tmp);
+                    return img != null ? scale(img) : null;
+                }
+            } finally {
+                tmp.delete();
+            }
+            return null;
+        }
+
+        private BufferedImage scale(BufferedImage img) {
+            int w = img.getWidth(), h = img.getHeight();
+            if (w <= SIZE && h <= SIZE) return img;
+            float s = Math.min((float) SIZE / w, (float) SIZE / h);
+            int nw = Math.round(w * s), nh = Math.round(h * s);
+            BufferedImage out = new BufferedImage(nw, nh, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = out.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(img, 0, 0, nw, nh, null);
+            g.dispose();
+            return out;
+        }
+
+        private String ext(File f) {
+            String n = f.getName().toLowerCase();
+            int i = n.lastIndexOf('.');
+            return i >= 0 ? n.substring(i + 1) : "";
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            int w = getWidth(), h = getHeight();
+            if (thumb != null) {
+                g.drawImage(thumb, (w - thumb.getWidth()) / 2, (h - thumb.getHeight()) / 2, null);
+            } else {
+                FontMetrics fm = g.getFontMetrics();
+                g.drawString(status, (w - fm.stringWidth(status)) / 2, h / 2);
+            }
+        }
     }
 
     private void hideRoute() {
